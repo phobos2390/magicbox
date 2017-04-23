@@ -8,6 +8,7 @@ int keyPressedLed = A4;
 int steps = 100;
 int stepperSpeed = 75;
 int stepVal = 512;
+int locked = 1;
 Stepper stepper(steps,D4,D5,D6,D7);
 Stepper rstepper(steps,D7,D4,D5,D6);
 
@@ -117,58 +118,80 @@ void clearLedArray()
     }
 }
 
+void handleKeyLocked(char key)
+{
+    if(key == '*')
+    {
+        if(bufferLength == 0)
+        {
+            Spark.publish("Backspace", "Attempted to backspace and failed");
+        }
+        else
+        {
+            --bufferLength;
+            sprintf(--iter,"\0");
+            Spark.publish("Backspace","Ignore Last Line");
+        }
+    }
+    else if(key == '#')
+    {
+        passwordMutex.lock();
+        bufferLength = 0;
+        Spark.publish("The Line Wound Up Being",buffer);
+        int difference = strcmp(buffer,password);
+        if(difference == 0)
+        {
+            Spark.publish("Password Check", "You have entered the correct password!");
+            Spark.publish("UnLocking", "UnLock in Progress...");
+            stepper.step(stepVal);
+            locked = 0;
+            Spark.publish("UnLocking","UnLock Successful");
+        }
+        else
+        {
+            char errorMsg [] = "Expected \"%s\" and received \"%s\". Difference of %d";
+            char errorStr [256];
+            sprintf(errorStr,errorMsg,password,buffer,difference);
+            Spark.publish("Password Check", errorStr);
+        }
+        iter = buffer;
+        *iter = '\0';
+        passwordMutex.unlock();
+    }
+    else if(bufferLength == BUFFERSIZE)
+    {
+        Spark.publish("You Entered", "ERROR: AT END OF BUFFER");
+    }
+    else
+    {
+        ++bufferLength;
+        snprintf(iter++,2 * sizeof(char),"%c\0",key);
+        char debugVal [] = { key, '\0'};
+        Spark.publish("You Entered",debugVal);
+    }
+}
+
+void handleKeyUnlocked()
+{
+    Spark.publish("Locking...","Locking In Progress");
+    rstepper.step(stepVal);
+    locked = 1;
+    Spark.publish("Locking","Safe is now locked");
+}
+
 void loop() 
 {
     KeyPressOutput keyArgs = readKeyPad();
     if(keyArgs.keyPressed)
     {
         int index = (keyArgs.row << 2) + keyArgs.col;
-        if(keyMap[index] == '*')
+        if(locked)
         {
-            if(bufferLength == 0)
-            {
-                Spark.publish("Backspace", "Attempted to backspace and failed");
-            }
-            else
-            {
-                --bufferLength;
-                sprintf(--iter,"\0");
-                Spark.publish("Backspace","Ignore Last Line");
-            }
-        }
-        else if(keyMap[index] == '#')
-        {
-            passwordMutex.lock();
-            bufferLength = 0;
-            Spark.publish("The Line Wound Up Being",buffer);
-            int difference = strcmp(buffer,password);
-            if(difference == 0)
-            {
-                Spark.publish("Password Check", "You have entered the correct password!");
-                stepper.step(stepVal);
-                rstepper.step(stepVal);
-            }
-            else
-            {
-                char errorMsg [] = "Expected \"%s\" and received \"%s\". Difference of %d";
-                char errorStr [256];
-                sprintf(errorStr,errorMsg,password,buffer,difference);
-                Spark.publish("Password Check", errorStr);
-            }
-            iter = buffer;
-            *iter = '\0';
-            passwordMutex.unlock();
-        }
-        else if(bufferLength == BUFFERSIZE)
-        {
-            Spark.publish("You Entered", "ERROR: AT END OF BUFFER");
+            handleKeyLocked(keyMap[index]);
         }
         else
         {
-            ++bufferLength;
-            snprintf(iter++,2 * sizeof(char),"%c\0",keyMap[index]);
-            char debugVal [] = { keyMap[index], '\0'};
-            Spark.publish("You Entered",debugVal);
+            handleKeyUnlocked();
         }
         digitalWrite(keyPressedLed,HIGH);
         delay(100);
